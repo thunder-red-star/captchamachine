@@ -2,52 +2,82 @@
 import cv2
 import pytesseract
 import numpy as np
+import os
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# If platform = windows, set the path to tesseract.exe
+if os.name == 'nt':
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Else, assume linux
+else:
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 # Read the image
 img = cv2.imread('captcha/captcha1.png')
 
-# Convert to black and white
-gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+# This sequence of commands removes noise (dots and lines) from the captcha and makes it easier to read for tesseract. The final image is a sequence of letters (black on white background) without dots or lines.
+img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+img = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+img = cv2.medianBlur(img, 5)
 
-# Blur the image
-blur = cv2.GaussianBlur(gray, (5, 5), 0)
+# create a copy with numpy format so we can do np.all(img[:, i] == 255) to check if the column is all white
+numimg = np.array(img)
 
-# Remove
+# Now we'll split the letters manually to make it easier for tesseract to read them. If a column is completely white, we'll assume that it's a space between letters.
+# We'll store each bounding box in a list
+boxes = []
+reading = False
+start = -1
+end = -1
+for i in range(img.shape[1]):
+    # If column is completely white, we're not reading a letter
+    if np.all(numimg[:, i] == 0) and reading:
+        reading = False
+        # If we were reading a letter, append the bounding box to the list
+        if start != -1:
+            boxes.append((start, i))
+    # If column is not completely white, we're reading a letter
+    else:
+        # If we weren't reading a letter, start reading
+        if not reading:
+            reading = True
+            start = i
 
-# Find contours
-contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# Remove bounding boxes that are one-pixel wide
+toDelete = []
+for box in boxes:
+    # If the bounding box is one pixel wide, remove it
+    if box[1] - box[0] == 1:
+        toDelete.append(box)
 
-# Create a copy of the image
-im2 = img.copy()
+# Remove the bounding boxes
+for box in toDelete:
+    boxes.remove(box)
 
-# Save that image for debugging purposes
-cv2.imwrite('captcha/captcha1_copy.png', thresh)
-
-# Text variable
 text = ''
 
-# Loop through the contours
-for cnt in contours:
-    # Get bounding box
-    x, y, w, h = cv2.boundingRect(cnt)
+print(boxes)
 
+im2 = img.copy()
+
+# Loop through the contours
+for letter in boxes:  
     # Draw rectangle
-    cv2.rectangle(im2, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    cv2.rectangle(img, (letter[0], 0), (letter[1], img.shape[0]), (0, 255, 0), 2)
 
     # Crop the image
-    roi = thresh[y:y + h, x:x + w]
+    roi = img[0:img.shape[0], letter[0]:letter[1]]
+
+    # Print for debug
+    print("The bounding box is: ", letter[0], letter[1])
+
+    # Draw the bounding box on im2
+    cv2.rectangle(img, (letter[0], 0), (letter[1], img.shape[0]), (0, 255, 0), 2)
+
+    # Save the image
+    cv2.imwrite('captcha/captcha1_copy.png', im2)
 
     # Read the text
-    text += pytesseract.image_to_string(roi, config='--psm 10')
-
-    # Print the text
-    print(text)
+    text += pytesseract.image_to_string(roi, config='--psm 10 --oem 1 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
 # Output
-# 5
-# 3
-# 4
-# 2
-# 1
+print(text)
